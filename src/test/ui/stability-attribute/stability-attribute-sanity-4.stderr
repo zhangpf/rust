@@ -1,0 +1,38 @@
+error: attribute must be of the form `#[unstable(...)]`
+  --> $DIR/stability-attribute-sanity-4.rs:8:5
+   |
+LL |     #[unstable] //~ ERROR attribute must be of the form `#[unstable(...)]`
+   |     ^^^^^^^^^^^
+
+error: attribute must be of the form `#[unstable(...)]`
+  --> $DIR/stability-attribute-sanity-4.rs:11:5
+   |
+LL |     #[unstable = "b"] //~ ERROR attribute must be of the form `#[unstable(...)]`
+   |     ^^^^^^^^^^^^^^^^^
+
+error: attribute must be of the form `#[stable(...)]`
+  --> $DIR/stability-attribute-sanity-4.rs:14:5
+   |
+LL |     #[stable] //~ ERROR attribute must be of the form `#[stable(...)]`
+   |     ^^^^^^^^^
+
+error: attribute must be of the form `#[stable(...)]`
+  --> $DIR/stability-attribute-sanity-4.rs:17:5
+   |
+LL |     #[stable = "a"] //~ ERROR attribute must be of the form `#[stable(...)]`
+   |     ^^^^^^^^^^^^^^^
+
+error: attribute must be of the form `#[rustc_deprecated(...)]`
+  --> $DIR/stability-attribute-sanity-4.rs:21:5
+   |
+LL |     #[rustc_deprecated] //~ ERROR attribute must be of the form `#[rustc_deprecated(...)]`
+   |     ^^^^^^^^^^^^^^^^^^^
+
+error: attribute must be of the form `#[rustc_deprecated(...)]`
+  --> $DIR/stability-attribute-sanity-4.rs:25:5
+   |
+LL |     #[rustc_deprecated = "a"] //~ ERROR attribute must be of the form `#[rustc_deprecated(...)]`
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: aborting due to 6 previous errors
+

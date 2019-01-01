@@ -15,6 +15,10 @@ pub fn collect_derives(cx: &mut ExtCtxt, attrs: &mut Vec<ast::Attribute>) -> Vec
         if attr.path != "derive" {
             return true;
         }
+        if !attr.is_meta_item_list() {
+            cx.span_err(attr.span, "attribute must be of the form `#[derive(...)]`");
+            return false;
+        }
 
         match attr.parse_list(cx.parse_sess,
                               |parser| parser.parse_path_allowing_meta(PathStyle::Mod)) {

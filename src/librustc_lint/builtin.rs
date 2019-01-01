@@ -35,7 +35,8 @@ use syntax::ast::Expr;
 use syntax::attr;
 use syntax::source_map::Spanned;
 use syntax::edition::Edition;
-use syntax::feature_gate::{AttributeGate, AttributeType, Stability, deprecated_attributes};
+use syntax::feature_gate::{AttributeGate, AttributeMeta, AttributeType};
+use syntax::feature_gate::{Stability, deprecated_attributes};
 use syntax_pos::{BytePos, Span, SyntaxContext};
 use syntax::symbol::keywords;
 use syntax::errors::{Applicability, DiagnosticBuilder};
@@ -752,7 +753,7 @@ impl EarlyLintPass for BadRepr {
 pub struct DeprecatedAttr {
     // This is not free to compute, so we want to keep it around, rather than
     // compute it for every attribute.
-    depr_attrs: Vec<&'static (&'static str, AttributeType, AttributeGate)>,
+    depr_attrs: Vec<&'static (&'static str, AttributeType, AttributeMeta::Type, AttributeGate)>,
 }
 
 impl DeprecatedAttr {
@@ -771,7 +772,7 @@ impl LintPass for DeprecatedAttr {
 
 impl EarlyLintPass for DeprecatedAttr {
     fn check_attribute(&mut self, cx: &EarlyContext, attr: &ast::Attribute) {
-        for &&(n, _, ref g) in &self.depr_attrs {
+        for &&(n, _, _, ref g) in &self.depr_attrs {
             if attr.name() == n {
                 if let &AttributeGate::Gated(Stability::Deprecated(link, suggestion),
                                              ref name,

@@ -24,6 +24,7 @@ fn main() {
     #[repr]
     let _y = "123";
     //~^^ ERROR attribute should not be applied to a statement
+    //~| ERROR attribute must be of the form `#[repr(...)]`
     //~| WARN `repr` attribute must have a hint
 
 
@@ -35,5 +36,6 @@ fn main() {
 
     let _z = #[repr] 1;
     //~^ ERROR attribute should not be applied to an expression
+    //~| ERROR attribute must be of the form `#[repr(...)]`
     //~| WARN `repr` attribute must have a hint
 }
