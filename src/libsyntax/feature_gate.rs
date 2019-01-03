@@ -24,8 +24,9 @@ use edition::{ALL_EDITIONS, Edition};
 use syntax_pos::{Span, DUMMY_SP};
 use errors::{DiagnosticBuilder, Handler};
 use visit::{self, FnKind, Visitor};
-use parse::ParseSess;
+use parse::{token, ParseSess};
 use symbol::{keywords, Symbol};
+use tokenstream::TokenTree;
 
 use std::{env};
 
@@ -1557,7 +1558,12 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
                 }
                 Err(mut err) => err.emit(),
             }
-            None => {}
+            None => if let Some(TokenTree::Token(_, token::Eq)) = attr.tokens.trees().next() {
+                // All key-value attributes are restricted to what fits into a meta-item.
+                if let Err(mut err) = attr.parse_meta(self.context.parse_sess) {
+                    err.emit();
+                }
+            }
         }
     }
 

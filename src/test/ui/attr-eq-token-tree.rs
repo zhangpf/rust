@@ -1,6 +1,4 @@
-// compile-pass
-
 #![feature(custom_attribute)]
 
-#[my_attr = !] // OK under feature gate
+#[my_attr = !] //~ ERROR unexpected token: `!`
 fn main() {}
