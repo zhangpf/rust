@@ -440,9 +440,6 @@ declare_features! (
     // Added for testing E0705; perma-unstable.
     (active, test_2018_feature, "1.31.0", Some(0), Some(Edition::Edition2018)),
 
-    // support for arbitrary delimited token streams in non-macro attributes
-    (active, unrestricted_attribute_tokens, "1.30.0", Some(55208), None),
-
     // Allows `use x::y;` to resolve through `self::x`, not just `::x`.
     (active, uniform_paths, "1.30.0", Some(53130), None),
 
@@ -686,6 +683,8 @@ declare_features! (
     (accepted, repr_packed, "1.33.0", Some(33158), None),
     // Allows calling `const unsafe fn` inside `unsafe` blocks in `const fn` functions.
     (accepted, min_const_unsafe_fn, "1.33.0", Some(55607), None),
+    // support for arbitrary delimited token streams in non-macro attributes
+    (accepted, unrestricted_attribute_tokens, "1.33.0", Some(55208), None),
 );
 
 // If you change this, please modify `src/doc/unstable-book` as well. You must
@@ -1558,14 +1557,7 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
                 }
                 Err(mut err) => err.emit(),
             }
-            None => if !self.context.features.unrestricted_attribute_tokens {
-                // Unfortunately, `parse_meta` cannot be called speculatively
-                // because it can report errors by itself, so we have to call it
-                // only if the feature is disabled.
-                if let Err(mut err) = attr.parse_meta(self.context.parse_sess) {
-                    err.help("try enabling `#![feature(unrestricted_attribute_tokens)]`").emit()
-                }
-            }
+            None => {}
         }
     }
 

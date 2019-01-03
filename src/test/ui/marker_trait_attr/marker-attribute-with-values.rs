@@ -1,5 +1,4 @@
 #![feature(marker_trait_attr)]
-#![feature(unrestricted_attribute_tokens)]
 
 #[marker(always)]
 trait Marker1 {}
