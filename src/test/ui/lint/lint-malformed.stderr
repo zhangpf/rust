@@ -1,14 +1,14 @@
 error[E0452]: malformed lint attribute
-  --> $DIR/lint-malformed.rs:1:1
-   |
-LL | #![deny = "foo"] //~ ERROR malformed lint attribute
-   | ^^^^^^^^^^^^^^^^
-
-error[E0452]: malformed lint attribute
   --> $DIR/lint-malformed.rs:2:10
    |
 LL | #![allow(bar = "baz")] //~ ERROR malformed lint attribute
    |          ^^^^^^^^^^^
+
+error: attribute must be of the form `#[deny(...)]`
+  --> $DIR/lint-malformed.rs:1:1
+   |
+LL | #![deny = "foo"] //~ ERROR attribute must be of the form `#[deny(...)]`
+   | ^^^^^^^^^^^^^^^^
 
 error: aborting due to 2 previous errors
 

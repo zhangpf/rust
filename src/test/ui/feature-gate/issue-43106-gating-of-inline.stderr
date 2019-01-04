@@ -1,11 +1,17 @@
+error: attribute must be of the form `#[inline]` or `#[inline(...)]`
+  --> $DIR/issue-43106-gating-of-inline.rs:17:5
+   |
+LL |     #[inline = "2100"] fn f() { }
+   |     ^^^^^^^^^^^^^^^^^^
+
 error[E0518]: attribute should be applied to function or closure
   --> $DIR/issue-43106-gating-of-inline.rs:11:1
    |
-LL |   #[inline = "2100"]
-   |   ^^^^^^^^^^^^^^^^^^
+LL |   #[inline]
+   |   ^^^^^^^^^
 LL |   //~^ ERROR attribute should be applied to function or closure
 LL | / mod inline {
-LL | |     mod inner { #![inline="2100"] }
+LL | |     mod inner { #![inline] }
 LL | |     //~^ ERROR attribute should be applied to function or closure
 LL | |
 ...  |
@@ -16,27 +22,27 @@ LL | | }
 error[E0518]: attribute should be applied to function or closure
   --> $DIR/issue-43106-gating-of-inline.rs:14:17
    |
-LL |     mod inner { #![inline="2100"] }
-   |     ------------^^^^^^^^^^^^^^^^^-- not a function or closure
+LL |     mod inner { #![inline] }
+   |     ------------^^^^^^^^^^-- not a function or closure
 
 error[E0518]: attribute should be applied to function or closure
-  --> $DIR/issue-43106-gating-of-inline.rs:19:5
+  --> $DIR/issue-43106-gating-of-inline.rs:20:5
    |
-LL |     #[inline = "2100"] struct S;
-   |     ^^^^^^^^^^^^^^^^^^ --------- not a function or closure
+LL |     #[inline] struct S;
+   |     ^^^^^^^^^ --------- not a function or closure
 
 error[E0518]: attribute should be applied to function or closure
-  --> $DIR/issue-43106-gating-of-inline.rs:22:5
+  --> $DIR/issue-43106-gating-of-inline.rs:23:5
    |
-LL |     #[inline = "2100"] type T = S;
-   |     ^^^^^^^^^^^^^^^^^^ ----------- not a function or closure
+LL |     #[inline] type T = S;
+   |     ^^^^^^^^^ ----------- not a function or closure
 
 error[E0518]: attribute should be applied to function or closure
-  --> $DIR/issue-43106-gating-of-inline.rs:25:5
+  --> $DIR/issue-43106-gating-of-inline.rs:26:5
    |
-LL |     #[inline = "2100"] impl S { }
-   |     ^^^^^^^^^^^^^^^^^^ ---------- not a function or closure
+LL |     #[inline] impl S { }
+   |     ^^^^^^^^^ ---------- not a function or closure
 
-error: aborting due to 5 previous errors
+error: aborting due to 6 previous errors
 
 For more information about this error, try `rustc --explain E0518`.

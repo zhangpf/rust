@@ -6,9 +6,8 @@
 
 #[rustc_on_unimplemented(
     message="the message"
-    label="the label"
+    label="the label" //~ ERROR expected one of `)` or `,`, found `label`
 )]
 trait T {}
-//~^^^ ERROR expected one of `)` or `,`, found `label`
 
 fn main() {  }

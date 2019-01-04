@@ -1,3 +1,15 @@
+error: attribute must be of the form `#[repr(...)]`
+  --> $DIR/issue-43988.rs:24:5
+   |
+LL |     #[repr]
+   |     ^^^^^^^
+
+error: attribute must be of the form `#[repr(...)]`
+  --> $DIR/issue-43988.rs:37:14
+   |
+LL |     let _z = #[repr] 1;
+   |              ^^^^^^^
+
 warning: `repr` attribute must have a hint
   --> $DIR/issue-43988.rs:24:5
    |
@@ -9,7 +21,7 @@ LL |     #[repr]
    = note: for more information, visit <https://doc.rust-lang.org/reference/type-layout.html>
 
 warning: `repr` attribute must have a hint
-  --> $DIR/issue-43988.rs:36:14
+  --> $DIR/issue-43988.rs:37:14
    |
 LL |     let _z = #[repr] 1;
    |              ^^^^^^^ needs a hint
@@ -60,7 +72,7 @@ LL |     let _y = "123";
    |     --------------- not a struct, enum or union
 
 error[E0518]: attribute should be applied to function or closure
-  --> $DIR/issue-43988.rs:32:5
+  --> $DIR/issue-43988.rs:33:5
    |
 LL |     #[inline(ABC)]
    |     ^^^^^^^^^^^^^^
@@ -68,12 +80,12 @@ LL |     foo();
    |     ----- not a function or closure
 
 error[E0517]: attribute should not be applied to an expression
-  --> $DIR/issue-43988.rs:36:14
+  --> $DIR/issue-43988.rs:37:14
    |
 LL |     let _z = #[repr] 1;
    |              ^^^^^^^ - not defining a struct, enum or union
 
-error: aborting due to 7 previous errors
+error: aborting due to 9 previous errors
 
 Some errors occurred: E0517, E0518.
 For more information about an error, try `rustc --explain E0517`.

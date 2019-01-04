@@ -24,8 +24,9 @@ use edition::{ALL_EDITIONS, Edition};
 use syntax_pos::{Span, DUMMY_SP};
 use errors::{DiagnosticBuilder, Handler};
 use visit::{self, FnKind, Visitor};
-use parse::ParseSess;
+use parse::{token, ParseSess};
 use symbol::{keywords, Symbol};
+use tokenstream::TokenTree;
 
 use std::{env};
 
@@ -440,9 +441,6 @@ declare_features! (
     // Added for testing E0705; perma-unstable.
     (active, test_2018_feature, "1.31.0", Some(0), Some(Edition::Edition2018)),
 
-    // support for arbitrary delimited token streams in non-macro attributes
-    (active, unrestricted_attribute_tokens, "1.30.0", Some(55208), None),
-
     // Allows `use x::y;` to resolve through `self::x`, not just `::x`.
     (active, uniform_paths, "1.30.0", Some(53130), None),
 
@@ -686,6 +684,8 @@ declare_features! (
     (accepted, repr_packed, "1.33.0", Some(33158), None),
     // Allows calling `const unsafe fn` inside `unsafe` blocks in `const fn` functions.
     (accepted, min_const_unsafe_fn, "1.33.0", Some(55607), None),
+    // support for arbitrary delimited token streams in non-macro attributes
+    (accepted, unrestricted_attribute_tokens, "1.33.0", Some(55208), None),
 );
 
 // If you change this, please modify `src/doc/unstable-book` as well. You must
@@ -714,6 +714,18 @@ pub enum AttributeGate {
 
     /// Ungated attribute, can be used on all release channels
     Ungated,
+}
+
+// Can't use `bitflags!`, its generated methods are not constant.
+#[allow(bad_style)]
+pub mod AttributeMeta {
+    pub type Type = u8;
+    pub const Word: Type = 1 << 0;
+    pub const List: Type = 1 << 1;
+    pub const NameValueStr: Type  = 1 << 2;
+    // Some special attributes like `cfg` must be checked
+    // before the generic check, so we skip them here.
+    pub const Skip: Type  = 1 << 3;
 }
 
 impl AttributeGate {
@@ -753,225 +765,227 @@ macro_rules! cfg_fn {
     }}
 }
 
-pub fn deprecated_attributes() -> Vec<&'static (&'static str, AttributeType, AttributeGate)> {
-    BUILTIN_ATTRIBUTES.iter().filter(|a| a.2.is_deprecated()).collect()
+pub fn deprecated_attributes() -> Vec<&'static (&'static str, AttributeType,
+                                                AttributeMeta::Type, AttributeGate)> {
+    BUILTIN_ATTRIBUTES.iter().filter(|(.., gate)| gate.is_deprecated()).collect()
 }
 
 pub fn is_builtin_attr_name(name: ast::Name) -> bool {
-    BUILTIN_ATTRIBUTES.iter().any(|&(builtin_name, _, _)| name == builtin_name)
+    BUILTIN_ATTRIBUTES.iter().any(|&(builtin_name, ..)| name == builtin_name)
 }
 
 pub fn is_builtin_attr(attr: &ast::Attribute) -> bool {
-    BUILTIN_ATTRIBUTES.iter().any(|&(builtin_name, _, _)| attr.path == builtin_name)
+    BUILTIN_ATTRIBUTES.iter().any(|&(builtin_name, ..)| attr.path == builtin_name)
 }
 
 // Attributes that have a special meaning to rustc or rustdoc
-pub const BUILTIN_ATTRIBUTES: &[(&str, AttributeType, AttributeGate)] = &[
+pub const BUILTIN_ATTRIBUTES: &[(&str, AttributeType, AttributeMeta::Type, AttributeGate)] = &[
     // Normal attributes
 
-    ("warn", Normal, Ungated),
-    ("allow", Normal, Ungated),
-    ("forbid", Normal, Ungated),
-    ("deny", Normal, Ungated),
+    ("warn", Normal, AttributeMeta::List, Ungated),
+    ("allow", Normal, AttributeMeta::List, Ungated),
+    ("forbid", Normal, AttributeMeta::List, Ungated),
+    ("deny", Normal, AttributeMeta::List, Ungated),
 
-    ("macro_use", Normal, Ungated),
-    ("macro_export", Normal, Ungated),
-    ("plugin_registrar", Normal, Ungated),
+    ("macro_use", Normal, AttributeMeta::Word | AttributeMeta::List, Ungated),
+    ("macro_export", Normal, AttributeMeta::Word | AttributeMeta::List, Ungated),
+    ("plugin_registrar", Normal, AttributeMeta::Word, Ungated),
 
-    ("cfg", Normal, Ungated),
-    ("cfg_attr", Normal, Ungated),
-    ("main", Normal, Ungated),
-    ("start", Normal, Ungated),
-    ("repr", Normal, Ungated),
-    ("path", Normal, Ungated),
-    ("abi", Normal, Ungated),
-    ("automatically_derived", Normal, Ungated),
-    ("no_mangle", Normal, Ungated),
-    ("no_link", Normal, Ungated),
-    ("derive", Normal, Ungated),
-    ("should_panic", Normal, Ungated),
-    ("ignore", Normal, Ungated),
-    ("no_implicit_prelude", Normal, Ungated),
-    ("reexport_test_harness_main", Normal, Ungated),
-    ("link_args", Normal, Gated(Stability::Unstable,
+    ("cfg", Normal, AttributeMeta::List | AttributeMeta::Skip, Ungated),
+    ("cfg_attr", Normal, AttributeMeta::List, Ungated),
+    ("main", Normal, AttributeMeta::Word, Ungated),
+    ("start", Normal, AttributeMeta::Word, Ungated),
+    ("repr", Normal, AttributeMeta::List, Ungated),
+    ("path", Normal, AttributeMeta::NameValueStr, Ungated),
+    ("automatically_derived", Normal, AttributeMeta::Word, Ungated),
+    ("no_mangle", Normal, AttributeMeta::Word, Ungated),
+    ("no_link", Normal, AttributeMeta::Word, Ungated),
+    ("derive", Normal, AttributeMeta::List, Ungated),
+    ("should_panic", Normal, AttributeMeta::Word | AttributeMeta::List, Ungated),
+    ("ignore", Normal, AttributeMeta::Word, Ungated),
+    ("no_implicit_prelude", Normal, AttributeMeta::Word, Ungated),
+    ("reexport_test_harness_main", Normal, AttributeMeta::NameValueStr, Ungated),
+    ("link_args", Normal, AttributeMeta::NameValueStr, Gated(Stability::Unstable,
                                 "link_args",
                                 "the `link_args` attribute is experimental and not \
                                  portable across platforms, it is recommended to \
                                  use `#[link(name = \"foo\")] instead",
                                 cfg_fn!(link_args))),
-    ("macro_escape", Normal, Ungated),
+    ("macro_escape", Normal, AttributeMeta::Word, Ungated),
 
     // RFC #1445.
-    ("structural_match", Whitelisted, Gated(Stability::Unstable,
+    ("structural_match", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                             "structural_match",
                                             "the semantics of constant patterns is \
                                              not yet settled",
                                             cfg_fn!(structural_match))),
 
     // RFC #2008
-    ("non_exhaustive", Whitelisted, Gated(Stability::Unstable,
+    ("non_exhaustive", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                           "non_exhaustive",
                                           "non exhaustive is an experimental feature",
                                           cfg_fn!(non_exhaustive))),
 
     // RFC #1268
-    ("marker", Normal, Gated(Stability::Unstable,
+    ("marker", Normal, AttributeMeta::Word, Gated(Stability::Unstable,
                              "marker_trait_attr",
                              "marker traits is an experimental feature",
                              cfg_fn!(marker_trait_attr))),
 
-    ("plugin", CrateLevel, Gated(Stability::Unstable,
+    ("plugin", CrateLevel, AttributeMeta::List, Gated(Stability::Unstable,
                                  "plugin",
                                  "compiler plugins are experimental \
                                   and possibly buggy",
                                  cfg_fn!(plugin))),
 
-    ("no_std", CrateLevel, Ungated),
-    ("no_core", CrateLevel, Gated(Stability::Unstable,
+    ("no_std", CrateLevel, AttributeMeta::Word, Ungated),
+    ("no_core", CrateLevel, AttributeMeta::Word, Gated(Stability::Unstable,
                                   "no_core",
                                   "no_core is experimental",
                                   cfg_fn!(no_core))),
-    ("lang", Normal, Gated(Stability::Unstable,
+    ("lang", Normal, AttributeMeta::NameValueStr, Gated(Stability::Unstable,
                            "lang_items",
                            "language items are subject to change",
                            cfg_fn!(lang_items))),
-    ("linkage", Whitelisted, Gated(Stability::Unstable,
+    ("linkage", Whitelisted, AttributeMeta::NameValueStr, Gated(Stability::Unstable,
                                    "linkage",
                                    "the `linkage` attribute is experimental \
                                     and not portable across platforms",
                                    cfg_fn!(linkage))),
-    ("thread_local", Whitelisted, Gated(Stability::Unstable,
+    ("thread_local", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                         "thread_local",
                                         "`#[thread_local]` is an experimental feature, and does \
                                          not currently handle destructors.",
                                         cfg_fn!(thread_local))),
 
-    ("rustc_on_unimplemented", Normal, Gated(Stability::Unstable,
+    ("rustc_on_unimplemented", Normal, AttributeMeta::List | AttributeMeta::NameValueStr,
+                                             Gated(Stability::Unstable,
                                              "on_unimplemented",
                                              "the `#[rustc_on_unimplemented]` attribute \
                                               is an experimental feature",
                                              cfg_fn!(on_unimplemented))),
-    ("rustc_const_unstable", Normal, Gated(Stability::Unstable,
+    ("rustc_const_unstable", Normal, AttributeMeta::List, Gated(Stability::Unstable,
                                              "rustc_const_unstable",
                                              "the `#[rustc_const_unstable]` attribute \
                                               is an internal feature",
                                              cfg_fn!(rustc_const_unstable))),
-    ("global_allocator", Normal, Ungated),
-    ("default_lib_allocator", Whitelisted, Gated(Stability::Unstable,
+    ("global_allocator", Normal, AttributeMeta::Word, Ungated),
+    ("default_lib_allocator", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                             "allocator_internals",
                                             "the `#[default_lib_allocator]` \
                                              attribute is an experimental feature",
                                             cfg_fn!(allocator_internals))),
-    ("needs_allocator", Normal, Gated(Stability::Unstable,
+    ("needs_allocator", Normal, AttributeMeta::Word, Gated(Stability::Unstable,
                                       "allocator_internals",
                                       "the `#[needs_allocator]` \
                                        attribute is an experimental \
                                        feature",
                                       cfg_fn!(allocator_internals))),
-    ("panic_runtime", Whitelisted, Gated(Stability::Unstable,
+    ("panic_runtime", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                          "panic_runtime",
                                          "the `#[panic_runtime]` attribute is \
                                           an experimental feature",
                                          cfg_fn!(panic_runtime))),
-    ("needs_panic_runtime", Whitelisted, Gated(Stability::Unstable,
+    ("needs_panic_runtime", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                                "needs_panic_runtime",
                                                "the `#[needs_panic_runtime]` \
                                                 attribute is an experimental \
                                                 feature",
                                                cfg_fn!(needs_panic_runtime))),
-    ("rustc_outlives", Normal, Gated(Stability::Unstable,
+    ("rustc_outlives", Normal, AttributeMeta::Word, Gated(Stability::Unstable,
                                      "rustc_attrs",
                                      "the `#[rustc_outlives]` attribute \
                                       is just used for rustc unit tests \
                                       and will never be stable",
                                      cfg_fn!(rustc_attrs))),
-    ("rustc_variance", Normal, Gated(Stability::Unstable,
+    ("rustc_variance", Normal, AttributeMeta::Word, Gated(Stability::Unstable,
                                      "rustc_attrs",
                                      "the `#[rustc_variance]` attribute \
                                       is just used for rustc unit tests \
                                       and will never be stable",
                                      cfg_fn!(rustc_attrs))),
-    ("rustc_regions", Normal, Gated(Stability::Unstable,
+    ("rustc_regions", Normal, AttributeMeta::Word, Gated(Stability::Unstable,
                                     "rustc_attrs",
                                     "the `#[rustc_regions]` attribute \
                                      is just used for rustc unit tests \
                                      and will never be stable",
                                     cfg_fn!(rustc_attrs))),
-    ("rustc_error", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_error", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                        "rustc_attrs",
                                        "the `#[rustc_error]` attribute \
                                         is just used for rustc unit tests \
                                         and will never be stable",
                                        cfg_fn!(rustc_attrs))),
-    ("rustc_dump_user_substs", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_dump_user_substs", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                        "rustc_attrs",
                                        "this attribute \
                                         is just used for rustc unit tests \
                                         and will never be stable",
                                        cfg_fn!(rustc_attrs))),
-    ("rustc_if_this_changed", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_if_this_changed", Whitelisted, AttributeMeta::Word | AttributeMeta::List,
+                                                 Gated(Stability::Unstable,
                                                  "rustc_attrs",
                                                  "the `#[rustc_if_this_changed]` attribute \
                                                   is just used for rustc unit tests \
                                                   and will never be stable",
                                                  cfg_fn!(rustc_attrs))),
-    ("rustc_then_this_would_need", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_then_this_would_need", Whitelisted, AttributeMeta::List, Gated(Stability::Unstable,
                                                       "rustc_attrs",
                                                       "the `#[rustc_if_this_changed]` attribute \
                                                        is just used for rustc unit tests \
                                                        and will never be stable",
                                                       cfg_fn!(rustc_attrs))),
-    ("rustc_dirty", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_dirty", Whitelisted, AttributeMeta::List, Gated(Stability::Unstable,
                                        "rustc_attrs",
                                        "the `#[rustc_dirty]` attribute \
                                         is just used for rustc unit tests \
                                         and will never be stable",
                                        cfg_fn!(rustc_attrs))),
-    ("rustc_clean", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_clean", Whitelisted, AttributeMeta::List, Gated(Stability::Unstable,
                                        "rustc_attrs",
                                        "the `#[rustc_clean]` attribute \
                                         is just used for rustc unit tests \
                                         and will never be stable",
                                        cfg_fn!(rustc_attrs))),
-    ("rustc_partition_reused", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_partition_reused", Whitelisted, AttributeMeta::List, Gated(Stability::Unstable,
                                                   "rustc_attrs",
                                                   "this attribute \
                                                    is just used for rustc unit tests \
                                                    and will never be stable",
                                                   cfg_fn!(rustc_attrs))),
-    ("rustc_partition_codegened", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_partition_codegened", Whitelisted, AttributeMeta::List, Gated(Stability::Unstable,
                                                       "rustc_attrs",
                                                       "this attribute \
                                                        is just used for rustc unit tests \
                                                        and will never be stable",
                                                       cfg_fn!(rustc_attrs))),
-    ("rustc_expected_cgu_reuse", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_expected_cgu_reuse", Whitelisted, AttributeMeta::List, Gated(Stability::Unstable,
                                                     "rustc_attrs",
                                                     "this attribute \
                                                      is just used for rustc unit tests \
                                                      and will never be stable",
                                                     cfg_fn!(rustc_attrs))),
-    ("rustc_synthetic", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_synthetic", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                                       "rustc_attrs",
                                                       "this attribute \
                                                        is just used for rustc unit tests \
                                                        and will never be stable",
                                                       cfg_fn!(rustc_attrs))),
-    ("rustc_symbol_name", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_symbol_name", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                              "rustc_attrs",
                                              "internal rustc attributes will never be stable",
                                              cfg_fn!(rustc_attrs))),
-    ("rustc_item_path", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_item_path", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                            "rustc_attrs",
                                            "internal rustc attributes will never be stable",
                                            cfg_fn!(rustc_attrs))),
-    ("rustc_mir", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_mir", Whitelisted, AttributeMeta::List, Gated(Stability::Unstable,
                                      "rustc_attrs",
                                      "the `#[rustc_mir]` attribute \
                                       is just used for rustc unit tests \
                                       and will never be stable",
                                      cfg_fn!(rustc_attrs))),
-    ("rustc_inherit_overflow_checks", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_inherit_overflow_checks", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                                          "rustc_attrs",
                                                          "the `#[rustc_inherit_overflow_checks]` \
                                                           attribute is just used to control \
@@ -980,41 +994,35 @@ pub const BUILTIN_ATTRIBUTES: &[(&str, AttributeType, AttributeGate)] = &[
                                                           across crates and will never be stable",
                                                           cfg_fn!(rustc_attrs))),
 
-    ("rustc_dump_program_clauses", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_dump_program_clauses", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                                      "rustc_attrs",
                                                      "the `#[rustc_dump_program_clauses]` \
                                                       attribute is just used for rustc unit \
                                                       tests and will never be stable",
                                                      cfg_fn!(rustc_attrs))),
-    ("rustc_test_marker", Normal, Gated(Stability::Unstable,
+    ("rustc_test_marker", Normal, AttributeMeta::Word, Gated(Stability::Unstable,
                                      "rustc_attrs",
                                      "the `#[rustc_test_marker]` attribute \
                                       is used internally to track tests",
                                      cfg_fn!(rustc_attrs))),
-    ("rustc_transparent_macro", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_transparent_macro", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                                    "rustc_attrs",
                                                    "used internally for testing macro hygiene",
                                                     cfg_fn!(rustc_attrs))),
-
-    // RFC #2094
-    ("nll", Whitelisted, Gated(Stability::Unstable,
-                               "nll",
-                               "Non lexical lifetimes",
-                               cfg_fn!(nll))),
-    ("compiler_builtins", Whitelisted, Gated(Stability::Unstable,
+    ("compiler_builtins", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                              "compiler_builtins",
                                              "the `#[compiler_builtins]` attribute is used to \
                                               identify the `compiler_builtins` crate which \
                                               contains compiler-rt intrinsics and will never be \
                                               stable",
                                           cfg_fn!(compiler_builtins))),
-    ("sanitizer_runtime", Whitelisted, Gated(Stability::Unstable,
+    ("sanitizer_runtime", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                              "sanitizer_runtime",
                                              "the `#[sanitizer_runtime]` attribute is used to \
                                               identify crates that contain the runtime of a \
                                               sanitizer and will never be stable",
                                              cfg_fn!(sanitizer_runtime))),
-    ("profiler_runtime", Whitelisted, Gated(Stability::Unstable,
+    ("profiler_runtime", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                              "profiler_runtime",
                                              "the `#[profiler_runtime]` attribute is used to \
                                               identify the `profiler_builtins` crate which \
@@ -1022,55 +1030,55 @@ pub const BUILTIN_ATTRIBUTES: &[(&str, AttributeType, AttributeGate)] = &[
                                               stable",
                                              cfg_fn!(profiler_runtime))),
 
-    ("allow_internal_unstable", Normal, Gated(Stability::Unstable,
+    ("allow_internal_unstable", Normal, AttributeMeta::Word, Gated(Stability::Unstable,
                                               "allow_internal_unstable",
                                               EXPLAIN_ALLOW_INTERNAL_UNSTABLE,
                                               cfg_fn!(allow_internal_unstable))),
 
-    ("allow_internal_unsafe", Normal, Gated(Stability::Unstable,
+    ("allow_internal_unsafe", Normal, AttributeMeta::Word, Gated(Stability::Unstable,
                                             "allow_internal_unsafe",
                                             EXPLAIN_ALLOW_INTERNAL_UNSAFE,
                                             cfg_fn!(allow_internal_unsafe))),
 
-    ("fundamental", Whitelisted, Gated(Stability::Unstable,
+    ("fundamental", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                        "fundamental",
                                        "the `#[fundamental]` attribute \
                                         is an experimental feature",
                                        cfg_fn!(fundamental))),
 
-    ("proc_macro_derive", Normal, Ungated),
+    ("proc_macro_derive", Normal, AttributeMeta::List, Ungated),
 
-    ("rustc_copy_clone_marker", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_copy_clone_marker", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                                    "rustc_attrs",
                                                    "internal implementation detail",
                                                    cfg_fn!(rustc_attrs))),
 
     // FIXME: #14408 whitelist docs since rustdoc looks at them
-    ("doc", Whitelisted, Ungated),
+    ("doc", Whitelisted, AttributeMeta::List | AttributeMeta::NameValueStr, Ungated),
 
     // FIXME: #14406 these are processed in codegen, which happens after the
     // lint pass
-    ("cold", Whitelisted, Ungated),
-    ("naked", Whitelisted, Gated(Stability::Unstable,
+    ("cold", Whitelisted, AttributeMeta::Word, Ungated),
+    ("naked", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                  "naked_functions",
                                  "the `#[naked]` attribute \
                                   is an experimental feature",
                                  cfg_fn!(naked_functions))),
-    ("target_feature", Whitelisted, Ungated),
-    ("export_name", Whitelisted, Ungated),
-    ("inline", Whitelisted, Ungated),
-    ("link", Whitelisted, Ungated),
-    ("link_name", Whitelisted, Ungated),
-    ("link_section", Whitelisted, Ungated),
-    ("no_builtins", Whitelisted, Ungated),
-    ("no_mangle", Whitelisted, Ungated),
-    ("no_debug", Whitelisted, Gated(
+    ("target_feature", Whitelisted, AttributeMeta::List, Ungated),
+    ("export_name", Whitelisted, AttributeMeta::NameValueStr, Ungated),
+    ("inline", Whitelisted, AttributeMeta::Word | AttributeMeta::List, Ungated),
+    ("link", Whitelisted, AttributeMeta::List, Ungated),
+    ("link_name", Whitelisted, AttributeMeta::NameValueStr, Ungated),
+    ("link_section", Whitelisted, AttributeMeta::NameValueStr, Ungated),
+    ("no_builtins", Whitelisted, AttributeMeta::Word, Ungated),
+    ("no_mangle", Whitelisted, AttributeMeta::Word, Ungated),
+    ("no_debug", Whitelisted, AttributeMeta::Word, Gated(
         Stability::Deprecated("https://github.com/rust-lang/rust/issues/29721", None),
         "no_debug",
         "the `#[no_debug]` attribute was an experimental feature that has been \
          deprecated due to lack of demand",
         cfg_fn!(no_debug))),
-    ("omit_gdb_pretty_printer_section", Whitelisted, Gated(Stability::Unstable,
+    ("omit_gdb_pretty_printer_section", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                                        "omit_gdb_pretty_printer_section",
                                                        "the `#[omit_gdb_pretty_printer_section]` \
                                                         attribute is just used for the Rust test \
@@ -1078,6 +1086,7 @@ pub const BUILTIN_ATTRIBUTES: &[(&str, AttributeType, AttributeGate)] = &[
                                                        cfg_fn!(omit_gdb_pretty_printer_section))),
     ("unsafe_destructor_blind_to_params",
      Normal,
+     AttributeMeta::Word,
      Gated(Stability::Deprecated("https://github.com/rust-lang/rust/issues/34761",
                                  Some("replace this attribute with `#[may_dangle]`")),
            "dropck_parametricity",
@@ -1086,93 +1095,87 @@ pub const BUILTIN_ATTRIBUTES: &[(&str, AttributeType, AttributeGate)] = &[
            cfg_fn!(dropck_parametricity))),
     ("may_dangle",
      Normal,
+     AttributeMeta::Word,
      Gated(Stability::Unstable,
            "dropck_eyepatch",
            "may_dangle has unstable semantics and may be removed in the future",
            cfg_fn!(dropck_eyepatch))),
-    ("unwind", Whitelisted, Gated(Stability::Unstable,
+    ("unwind", Whitelisted, AttributeMeta::List, Gated(Stability::Unstable,
                                   "unwind_attributes",
                                   "#[unwind] is experimental",
                                   cfg_fn!(unwind_attributes))),
-    ("used", Whitelisted, Ungated),
+    ("used", Whitelisted, AttributeMeta::Word, Ungated),
 
     // used in resolve
-    ("prelude_import", Whitelisted, Gated(Stability::Unstable,
+    ("prelude_import", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                           "prelude_import",
                                           "`#[prelude_import]` is for use by rustc only",
                                           cfg_fn!(prelude_import))),
 
     // FIXME: #14407 these are only looked at on-demand so we can't
     // guarantee they'll have already been checked
-    ("rustc_deprecated", Whitelisted, Ungated),
-    ("must_use", Whitelisted, Ungated),
-    ("stable", Whitelisted, Ungated),
-    ("unstable", Whitelisted, Ungated),
-    ("deprecated", Normal, Ungated),
+    ("rustc_deprecated", Whitelisted, AttributeMeta::List, Ungated),
+    ("must_use", Whitelisted, AttributeMeta::Word | AttributeMeta::NameValueStr, Ungated),
+    ("stable", Whitelisted, AttributeMeta::List, Ungated),
+    ("unstable", Whitelisted, AttributeMeta::List, Ungated),
+    ("deprecated", Normal, AttributeMeta::Word | AttributeMeta::List, Ungated),
 
-    ("rustc_paren_sugar", Normal, Gated(Stability::Unstable,
+    ("rustc_paren_sugar", Normal, AttributeMeta::Word, Gated(Stability::Unstable,
                                         "unboxed_closures",
                                         "unboxed_closures are still evolving",
                                         cfg_fn!(unboxed_closures))),
 
-    ("windows_subsystem", Whitelisted, Ungated),
+    ("windows_subsystem", Whitelisted, AttributeMeta::NameValueStr, Ungated),
 
-    ("proc_macro_attribute", Normal, Ungated),
-    ("proc_macro", Normal, Ungated),
+    ("proc_macro_attribute", Normal, AttributeMeta::Word, Ungated),
+    ("proc_macro", Normal, AttributeMeta::Word, Ungated),
 
-    ("rustc_proc_macro_decls", Normal, Gated(Stability::Unstable,
+    ("rustc_proc_macro_decls", Normal, AttributeMeta::Word, Gated(Stability::Unstable,
                                              "rustc_proc_macro_decls",
                                              "used internally by rustc",
                                              cfg_fn!(rustc_attrs))),
 
-    ("allow_fail", Normal, Gated(Stability::Unstable,
+    ("allow_fail", Normal, AttributeMeta::Word, Gated(Stability::Unstable,
                                  "allow_fail",
                                  "allow_fail attribute is currently unstable",
                                  cfg_fn!(allow_fail))),
 
-    ("rustc_std_internal_symbol", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_std_internal_symbol", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                      "rustc_attrs",
                                      "this is an internal attribute that will \
                                       never be stable",
                                      cfg_fn!(rustc_attrs))),
 
     // whitelists "identity-like" conversion methods to suggest on type mismatch
-    ("rustc_conversion_suggestion", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_conversion_suggestion", Whitelisted, AttributeMeta::Word, Gated(Stability::Unstable,
                                                        "rustc_attrs",
                                                        "this is an internal attribute that will \
                                                         never be stable",
                                                        cfg_fn!(rustc_attrs))),
 
-    ("rustc_args_required_const", Whitelisted, Gated(Stability::Unstable,
+    ("rustc_args_required_const", Whitelisted, AttributeMeta::List, Gated(Stability::Unstable,
                                  "rustc_attrs",
                                  "never will be stable",
                                  cfg_fn!(rustc_attrs))),
-
-    // RFC #2093
-    ("infer_static_outlives_requirements", Normal, Gated(Stability::Unstable,
-                                   "infer_static_outlives_requirements",
-                                   "infer 'static lifetime requirements",
-                                   cfg_fn!(infer_static_outlives_requirements))),
-
     // RFC 2070
-    ("panic_handler", Normal, Ungated),
+    ("panic_handler", Normal, AttributeMeta::Word, Ungated),
 
-    ("alloc_error_handler", Normal, Gated(Stability::Unstable,
+    ("alloc_error_handler", Normal, AttributeMeta::Word, Gated(Stability::Unstable,
                            "alloc_error_handler",
                            "#[alloc_error_handler] is an unstable feature",
                            cfg_fn!(alloc_error_handler))),
 
     // Crate level attributes
-    ("crate_name", CrateLevel, Ungated),
-    ("crate_type", CrateLevel, Ungated),
-    ("crate_id", CrateLevel, Ungated),
-    ("feature", CrateLevel, Ungated),
-    ("no_start", CrateLevel, Ungated),
-    ("no_main", CrateLevel, Ungated),
-    ("no_builtins", CrateLevel, Ungated),
-    ("recursion_limit", CrateLevel, Ungated),
-    ("type_length_limit", CrateLevel, Ungated),
-    ("test_runner", CrateLevel, Gated(Stability::Unstable,
+    ("crate_name", CrateLevel, AttributeMeta::NameValueStr, Ungated),
+    ("crate_type", CrateLevel, AttributeMeta::NameValueStr, Ungated),
+    ("crate_id", CrateLevel, AttributeMeta::NameValueStr, Ungated),
+    ("feature", CrateLevel, AttributeMeta::List, Ungated),
+    ("no_start", CrateLevel, AttributeMeta::Word, Ungated),
+    ("no_main", CrateLevel, AttributeMeta::Word, Ungated),
+    ("no_builtins", CrateLevel, AttributeMeta::Word, Ungated),
+    ("recursion_limit", CrateLevel, AttributeMeta::NameValueStr, Ungated),
+    ("type_length_limit", CrateLevel, AttributeMeta::NameValueStr, Ungated),
+    ("test_runner", CrateLevel, AttributeMeta::List, Gated(Stability::Unstable,
                     "custom_test_frameworks",
                     EXPLAIN_CUSTOM_TEST_FRAMEWORKS,
                     cfg_fn!(custom_test_frameworks))),
@@ -1249,7 +1252,7 @@ impl<'a> Context<'a> {
     fn check_attribute(&self, attr: &ast::Attribute, is_macro: bool) {
         debug!("check_attribute(attr = {:?})", attr);
         let name = attr.name().as_str();
-        for &(n, ty, ref gateage) in BUILTIN_ATTRIBUTES {
+        for &(n, ty, _meta, ref gateage) in BUILTIN_ATTRIBUTES {
             if name == n {
                 if let Gated(_, name, desc, ref has_feature) = *gateage {
                     gate_feature_fn!(self, has_feature, attr.span, name, desc, GateStrength::Hard);
@@ -1519,12 +1522,47 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
             }
         }
 
-        if !self.context.features.unrestricted_attribute_tokens {
-            // Unfortunately, `parse_meta` cannot be called speculatively
-            // because it can report errors by itself, so we have to call it
-            // only if the feature is disabled.
-            if let Err(mut err) = attr.parse_meta(self.context.parse_sess) {
-                err.help("try enabling `#![feature(unrestricted_attribute_tokens)]`").emit()
+        match BUILTIN_ATTRIBUTES.iter().find(|(name, ..)| attr.path == name) {
+            Some(&(name, _, allowed_meta, _)) => match attr.parse_meta(self.context.parse_sess) {
+                Ok(meta) => if allowed_meta & AttributeMeta::Skip == 0 {
+                    let meta_kind = match &meta.node {
+                        ast::MetaItemKind::Word => AttributeMeta::Word,
+                        ast::MetaItemKind::List(..) => AttributeMeta::List,
+                        ast::MetaItemKind::NameValue(lit) if lit.node.is_str() =>
+                            AttributeMeta::NameValueStr,
+                        ast::MetaItemKind::NameValue(..) => 0,
+                    };
+                    if meta_kind & allowed_meta == 0 {
+                        let mut msg = "attribute must be of the form ".to_owned();
+                        let mut first = true;
+                        for &meta_kind in [AttributeMeta::Word,
+                                           AttributeMeta::List,
+                                           AttributeMeta::NameValueStr].iter() {
+                            if meta_kind & allowed_meta != 0 {
+                                let descr = match meta_kind {
+                                    AttributeMeta::Word => "",
+                                    AttributeMeta::List => "(...)",
+                                    AttributeMeta::NameValueStr => " = \"...\"",
+                                    _ => unreachable!(),
+                                };
+                                if first {
+                                    first = false;
+                                } else {
+                                    msg.push_str(" or ");
+                                }
+                                msg.push_str(&format!("`#[{}{}]`", name, descr));
+                            }
+                        }
+                        self.context.parse_sess.span_diagnostic.span_err(meta.span, &msg);
+                    }
+                }
+                Err(mut err) => err.emit(),
+            }
+            None => if let Some(TokenTree::Token(_, token::Eq)) = attr.tokens.trees().next() {
+                // All key-value attributes are restricted to what fits into a meta-item.
+                if let Err(mut err) = attr.parse_meta(self.context.parse_sess) {
+                    err.emit();
+                }
             }
         }
     }
@@ -1954,11 +1992,7 @@ pub fn get_features(span_handler: &Handler, krate_attrs: &[ast::Attribute],
 
         let list = match attr.meta_item_list() {
             Some(list) => list,
-            None => {
-                span_err!(span_handler, attr.span, E0555,
-                          "malformed feature attribute, expected #![feature(...)]");
-                continue
-            }
+            None => continue,
         };
 
         for mi in list {
