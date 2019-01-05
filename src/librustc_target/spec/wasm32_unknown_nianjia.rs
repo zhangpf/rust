@@ -17,7 +17,7 @@
 // (aka panic=abort by default), but otherwise this is in general a relatively
 // standard target.
 
-use super::{LldFlavor, LinkerFlavor, Target, TargetOptions, PanicStrategy};
+use super::{LldFlavor, LinkerFlavor, Target, TargetOptions};
 
 pub fn target() -> Result<Target, String> {
     let opts = TargetOptions {
@@ -41,14 +41,14 @@ pub fn target() -> Result<Target, String> {
         // Unwinding doesn't work right now, so the whole target unconditionally
         // defaults to panic=abort. Note that this is guaranteed to change in
         // the future once unwinding is implemented. Don't rely on this.
-        panic_strategy: PanicStrategy::Abort,
+        //panic_strategy: PanicStrategy::Abort,
 
         // Wasm doesn't have atomics yet, so tell LLVM that we're in a single
         // threaded model which will legalize atomics to normal operations.
         singlethread: true,
 
         // no dynamic linking, no need for default visibility!
-        default_hidden_visibility: true,
+        //default_hidden_visibility: true,
 
         // we use the LLD shipped with the Rust toolchain by default
         linker: Some("rust-lld".to_owned()),
@@ -60,18 +60,16 @@ pub fn target() -> Result<Target, String> {
         // enable simd features.
         simd_types_indirect: false,
 
-        target_family: Some("unix".to_string()),
-
         .. Default::default()
     };
     Ok(Target {
-        llvm_target: "wasm32-unknown-unknown".to_string(),
+        llvm_target: "wasm32-unknown-nianjia".to_string(),
         target_endian: "little".to_string(),
         target_pointer_width: "32".to_string(),
         target_c_int_width: "32".to_string(),
         // This is basically guaranteed to change in the future, don't rely on
         // this. Use `not(target_os = "emscripten")` for now.
-        target_os: "unknown".to_string(),
+        target_os: "nianjia".to_string(),
         target_env: String::new(),
         target_vendor: "unknown".to_string(),
         data_layout: "e-m:e-p:32:32-i64:64-n32:64-S128".to_string(),

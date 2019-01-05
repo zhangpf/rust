@@ -29,6 +29,7 @@ use libc;
 #[cfg(all(not(rustdoc), target_os = "fuchsia"))]   pub use os::fuchsia as platform;
 #[cfg(all(not(rustdoc), target_os = "l4re"))]      pub use os::linux as platform;
 #[cfg(all(not(rustdoc), target_os = "hermit"))]    pub use os::hermit as platform;
+#[cfg(all(not(rustdoc), target_os = "nianjia"))]    pub use os::linux as platform;
 
 pub use self::rand::hashmap_random_keys;
 pub use libc::strlen;
@@ -88,6 +89,11 @@ pub fn init() {
     }
     #[cfg(any(target_os = "emscripten", target_os = "fuchsia"))]
     unsafe fn reset_sigpipe() {}
+
+    #[cfg(target_os = "nianjia")]
+    fn reset_sigpipe() {
+        nainjia_test()
+    }
 }
 
 #[cfg(target_os = "android")]
@@ -165,4 +171,11 @@ pub fn cvt_r<T, F>(mut f: F) -> io::Result<T>
 // implemented as an illegal instruction.
 pub unsafe fn abort_internal() -> ! {
     ::libc::abort()
+}
+
+
+#[cfg(target_os = "nianjia")]
+#[link_name = "nianjia"]
+extern "C" {
+    pub fn nainjia_test();
 }
