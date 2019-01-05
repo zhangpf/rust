@@ -1,13 +1,3 @@
-// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use rustc::dep_graph::DepGraph;
 use rustc::hir;
 use rustc::hir::lowering::lower_crate;
@@ -246,8 +236,6 @@ pub fn compile_input(
             }
         }
 
-        let arenas = AllArenas::new();
-
         // Construct the HIR map
         let hir_map = time(sess, "indexing hir", || {
             hir_map::map_crate(sess, cstore, &mut hir_forest, &defs)
@@ -263,7 +251,6 @@ pub fn compile_input(
                     sess,
                     outdir,
                     output,
-                    &arenas,
                     &cstore,
                     &hir_map,
                     &analysis,
@@ -284,6 +271,8 @@ pub fn compile_input(
             None
         };
 
+        let mut arenas = AllArenas::new();
+
         phase_3_run_analysis_passes(
             &*codegen_backend,
             control,
@@ -292,7 +281,7 @@ pub fn compile_input(
             hir_map,
             analysis,
             resolutions,
-            &arenas,
+            &mut arenas,
             &crate_name,
             &outputs,
             |tcx, analysis, rx, result| {
@@ -337,6 +326,10 @@ pub fn compile_input(
                         sess.err(&format!("could not emit MIR: {}", e));
                         sess.abort_if_errors();
                     }
+                }
+
+                if tcx.sess.opts.debugging_opts.query_stats {
+                    tcx.queries.print_stats();
                 }
 
                 Ok((outputs.clone(), ongoing_codegen, tcx.dep_graph.clone()))
@@ -533,7 +526,6 @@ pub struct CompileState<'a, 'tcx: 'a> {
     pub output_filenames: Option<&'a OutputFilenames>,
     pub out_dir: Option<&'a Path>,
     pub out_file: Option<&'a Path>,
-    pub arenas: Option<&'tcx AllArenas<'tcx>>,
     pub expanded_crate: Option<&'a ast::Crate>,
     pub hir_crate: Option<&'a hir::Crate>,
     pub hir_map: Option<&'a hir_map::Map<'tcx>>,
@@ -549,7 +541,6 @@ impl<'a, 'tcx> CompileState<'a, 'tcx> {
             session,
             out_dir: out_dir.as_ref().map(|s| &**s),
             out_file: None,
-            arenas: None,
             krate: None,
             registry: None,
             cstore: None,
@@ -605,7 +596,6 @@ impl<'a, 'tcx> CompileState<'a, 'tcx> {
         session: &'tcx Session,
         out_dir: &'a Option<PathBuf>,
         out_file: &'a Option<PathBuf>,
-        arenas: &'tcx AllArenas<'tcx>,
         cstore: &'tcx CStore,
         hir_map: &'a hir_map::Map<'tcx>,
         analysis: &'a ty::CrateAnalysis,
@@ -617,7 +607,6 @@ impl<'a, 'tcx> CompileState<'a, 'tcx> {
     ) -> Self {
         CompileState {
             crate_name: Some(crate_name),
-            arenas: Some(arenas),
             cstore: Some(cstore),
             hir_map: Some(hir_map),
             analysis: Some(analysis),
@@ -730,9 +719,9 @@ pub struct ExpansionResult {
     pub hir_forest: hir_map::Forest,
 }
 
-pub struct InnerExpansionResult<'a, 'b: 'a> {
+pub struct InnerExpansionResult<'a> {
     pub expanded_crate: ast::Crate,
-    pub resolver: Resolver<'a, 'b>,
+    pub resolver: Resolver<'a>,
     pub hir_forest: hir_map::Forest,
 }
 
@@ -811,7 +800,7 @@ where
 
 /// Same as phase_2_configure_and_expand, but doesn't let you keep the resolver
 /// around
-pub fn phase_2_configure_and_expand_inner<'a, 'b: 'a, F>(
+pub fn phase_2_configure_and_expand_inner<'a, F>(
     sess: &'a Session,
     cstore: &'a CStore,
     mut krate: ast::Crate,
@@ -820,9 +809,9 @@ pub fn phase_2_configure_and_expand_inner<'a, 'b: 'a, F>(
     addl_plugins: Option<Vec<String>>,
     make_glob_map: MakeGlobMap,
     resolver_arenas: &'a ResolverArenas<'a>,
-    crate_loader: &'a mut CrateLoader<'b>,
+    crate_loader: &'a mut CrateLoader<'a>,
     after_expand: F,
-) -> Result<InnerExpansionResult<'a, 'b>, CompileIncomplete>
+) -> Result<InnerExpansionResult<'a>, CompileIncomplete>
 where
     F: FnOnce(&ast::Crate) -> CompileResult,
 {
@@ -1002,7 +991,6 @@ where
         };
 
         let mut ecx = ExtCtxt::new(&sess.parse_sess, cfg, &mut resolver);
-        let err_count = ecx.parse_sess.span_diagnostic.err_count();
 
         // Expand macros now!
         let krate = time(sess, "expand crate", || {
@@ -1027,9 +1015,6 @@ where
             let lint = lint::builtin::MISSING_FRAGMENT_SPECIFIER;
             let msg = "missing fragment specifier";
             sess.buffer_lint(lint, ast::CRATE_NODE_ID, span, msg);
-        }
-        if ecx.parse_sess.span_diagnostic.err_count() - ecx.resolve_err_count > err_count {
-            ecx.parse_sess.span_diagnostic.abort_if_errors();
         }
         if cfg!(windows) {
             env::set_var("PATH", &old_path);
@@ -1134,12 +1119,6 @@ where
         })
     })?;
 
-    // Unresolved macros might be due to mistyped `#[macro_use]`,
-    // so abort after checking for unknown attributes. (#49074)
-    if resolver.found_unresolved_macro {
-        sess.diagnostic().abort_if_errors();
-    }
-
     // Lower ast -> hir.
     // First, we need to collect the dep_graph.
     let dep_graph = match future_dep_graph {
@@ -1216,7 +1195,7 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(
     hir_map: hir_map::Map<'tcx>,
     mut analysis: ty::CrateAnalysis,
     resolutions: Resolutions,
-    arenas: &'tcx AllArenas<'tcx>,
+    arenas: &'tcx mut AllArenas<'tcx>,
     name: &str,
     output_filenames: &OutputFilenames,
     f: F,

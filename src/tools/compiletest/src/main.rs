@@ -1,13 +1,3 @@
-// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 #![crate_name = "compiletest"]
 #![feature(test)]
 #![deny(warnings)]
@@ -28,6 +18,7 @@ extern crate serde_derive;
 extern crate serde_json;
 extern crate test;
 extern crate rustfix;
+extern crate walkdir;
 
 use common::CompareMode;
 use common::{expected_output_path, output_base_dir, output_relative_path, UI_EXTENSIONS};
@@ -43,6 +34,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use test::ColorConfig;
 use util::logv;
+use walkdir::WalkDir;
 
 use self::header::{EarlyProps, Ignore};
 
@@ -682,6 +674,15 @@ fn stamp(config: &Config, testpaths: &TestPaths, revision: Option<&str>) -> Path
     output_base_dir(config, testpaths, revision).join("stamp")
 }
 
+/// Return an iterator over timestamps of files in the directory at `path`.
+fn collect_timestamps(path: &PathBuf) -> impl Iterator<Item=FileTime> {
+    WalkDir::new(path)
+        .into_iter()
+        .map(|entry| entry.unwrap())
+        .filter(|entry| entry.metadata().unwrap().is_file())
+        .map(|entry| mtime(entry.path()))
+}
+
 fn up_to_date(
     config: &Config,
     testpaths: &TestPaths,
@@ -725,16 +726,7 @@ fn up_to_date(
     for pretty_printer_file in &pretty_printer_files {
         inputs.push(mtime(&rust_src_dir.join(pretty_printer_file)));
     }
-    let mut entries = config.run_lib_path.read_dir().unwrap().collect::<Vec<_>>();
-    while let Some(entry) = entries.pop() {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        if entry.metadata().unwrap().is_file() {
-            inputs.push(mtime(&path));
-        } else {
-            entries.extend(path.read_dir().unwrap());
-        }
-    }
+    inputs.extend(collect_timestamps(&config.run_lib_path));
     if let Some(ref rustdoc_path) = config.rustdoc_path {
         inputs.push(mtime(&rustdoc_path));
         inputs.push(mtime(&rust_src_dir.join("src/etc/htmldocck.py")));
@@ -745,6 +737,9 @@ fn up_to_date(
         let path = &expected_output_path(testpaths, revision, &config.compare_mode, extension);
         inputs.push(mtime(path));
     }
+
+    // Compiletest itself.
+    inputs.extend(collect_timestamps(&rust_src_dir.join("src/tools/compiletest/")));
 
     inputs.iter().any(|input| *input > stamp)
 }

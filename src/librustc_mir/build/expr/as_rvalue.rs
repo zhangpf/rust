@@ -1,13 +1,3 @@
-// Copyright 2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! See docs in `build/expr/mod.rs`.
 
 use rustc_data_structures::fx::FxHashMap;
@@ -280,11 +270,13 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                             span: expr_span,
                             ty: this.hir.tcx().types.u32,
                             user_ty: None,
-                            literal: ty::Const::from_bits(
-                                this.hir.tcx(),
-                                0,
-                                ty::ParamEnv::empty().and(this.hir.tcx().types.u32),
-                            ),
+                            literal: this.hir.tcx().intern_lazy_const(ty::LazyConst::Evaluated(
+                                ty::Const::from_bits(
+                                    this.hir.tcx(),
+                                    0,
+                                    ty::ParamEnv::empty().and(this.hir.tcx().types.u32),
+                                ),
+                            )),
                         }));
                         box AggregateKind::Generator(closure_id, substs, movability)
                     }
@@ -341,6 +333,9 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                         .collect()
                 };
 
+                let user_ty = user_ty.map(|ty| {
+                    this.canonical_user_type_annotations.push((expr_span, ty))
+                });
                 let adt = box AggregateKind::Adt(
                     adt_def,
                     variant_index,

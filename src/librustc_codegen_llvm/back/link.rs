@@ -1,13 +1,3 @@
-// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use back::wasm;
 use super::archive::{ArchiveBuilder, ArchiveConfig};
 use super::bytecode::RLIB_BYTECODE_EXTENSION;
@@ -457,6 +447,21 @@ fn print_native_static_libs(sess: &Session, all_native_libs: &[NativeLibrary]) {
     }
 }
 
+fn get_file_path(sess: &Session, name: &str) -> PathBuf {
+    let fs = sess.target_filesearch(PathKind::Native);
+    let file_path = fs.get_lib_path().join(name);
+    if file_path.exists() {
+        return file_path
+    }
+    for search_path in fs.search_paths() {
+        let file_path = search_path.dir.join(name);
+        if file_path.exists() {
+            return file_path
+        }
+    }
+    PathBuf::from(name)
+}
+
 // Create a dynamic library or executable
 //
 // This will invoke the system linker/cc to create the resulting file. This
@@ -472,7 +477,6 @@ fn link_natively(sess: &Session,
     // The invocations of cc share some flags across platforms
     let (pname, mut cmd) = get_linker(sess, &linker, flavor);
 
-    let root = sess.target_filesearch(PathKind::Native).get_lib_path();
     if let Some(args) = sess.target.target.options.pre_link_args.get(&flavor) {
         cmd.args(args);
     }
@@ -500,12 +504,12 @@ fn link_natively(sess: &Session,
         &sess.target.target.options.pre_link_objects_dll
     };
     for obj in pre_link_objects {
-        cmd.arg(root.join(obj));
+        cmd.arg(get_file_path(sess, obj));
     }
 
     if crate_type == config::CrateType::Executable && sess.crt_static() {
         for obj in &sess.target.target.options.pre_link_objects_exe_crt {
-            cmd.arg(root.join(obj));
+            cmd.arg(get_file_path(sess, obj));
         }
     }
 
@@ -529,11 +533,11 @@ fn link_natively(sess: &Session,
         cmd.args(args);
     }
     for obj in &sess.target.target.options.post_link_objects {
-        cmd.arg(root.join(obj));
+        cmd.arg(get_file_path(sess, obj));
     }
     if sess.crt_static() {
         for obj in &sess.target.target.options.post_link_objects_crt {
-            cmd.arg(root.join(obj));
+            cmd.arg(get_file_path(sess, obj));
         }
     }
     if let Some(args) = sess.target.target.options.post_link_args.get(&flavor) {

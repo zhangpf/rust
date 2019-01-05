@@ -1,13 +1,3 @@
-// Copyright 2018 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 // New test for #53818: modifying static memory at compile-time is not allowed.
 // The test should never compile successfully
 
@@ -27,9 +17,7 @@ fn foo() {}
 
 static BAR: () = unsafe {
     *FOO.0.get() = 5;
-    // we do not error on the above access, because that is not detectable statically. Instead,
-    // const evaluation will error when trying to evaluate it. Due to the error below, we never even
-    // attempt to const evaluate `BAR`, so we don't see the error
+    //~^ contains unimplemented expression
 
     foo();
     //~^ ERROR calls in statics are limited to constant functions, tuple structs and tuple variants

@@ -1,13 +1,3 @@
-// Copyright 2012-2016 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use super::_match::{MatchCheckCtxt, Matrix, expand_pattern, is_useful};
 use super::_match::Usefulness::*;
 use super::_match::WitnessPreference::*;
@@ -230,7 +220,11 @@ impl<'a, 'tcx> MatchVisitor<'a, 'tcx> {
                 let scrutinee_is_uninhabited = if self.tcx.features().exhaustive_patterns {
                     self.tcx.is_ty_uninhabited_from(module, pat_ty)
                 } else {
-                    self.conservative_is_uninhabited(pat_ty)
+                    match pat_ty.sty {
+                        ty::Never => true,
+                        ty::Adt(def, _) => def.variants.is_empty(),
+                        _ => false
+                    }
                 };
                 if !scrutinee_is_uninhabited {
                     // We know the type is inhabited, so this must be wrong
@@ -256,15 +250,6 @@ impl<'a, 'tcx> MatchVisitor<'a, 'tcx> {
             let scrut_ty = self.tables.node_id_to_type(scrut.hir_id);
             check_exhaustive(cx, scrut_ty, scrut.span, &matrix);
         })
-    }
-
-    fn conservative_is_uninhabited(&self, scrutinee_ty: Ty<'tcx>) -> bool {
-        // "rustc-1.0-style" uncontentious uninhabitableness check
-        match scrutinee_ty.sty {
-            ty::Never => true,
-            ty::Adt(def, _) => def.variants.is_empty(),
-            _ => false
-        }
     }
 
     fn check_irrefutable(&self, pat: &'tcx Pat, origin: &str) {
@@ -321,7 +306,7 @@ fn check_for_bindings_named_same_as_variants(cx: &MatchVisitor, pat: &Pat) {
                 let pat_ty = cx.tables.pat_ty(p);
                 if let ty::Adt(edef, _) = pat_ty.sty {
                     if edef.is_enum() && edef.variants.iter().any(|variant| {
-                        variant.name == ident.name && variant.ctor_kind == CtorKind::Const
+                        variant.ident == ident && variant.ctor_kind == CtorKind::Const
                     }) {
                         let ty_path = cx.tcx.item_path_str(edef.did);
                         let mut err = struct_span_warn!(cx.tcx.sess, p.span, E0170,
@@ -560,7 +545,7 @@ fn check_legality_of_move_bindings(cx: &MatchVisitor,
                     match bm {
                         ty::BindByValue(..) => {
                             let pat_ty = cx.tables.node_id_to_type(p.hir_id);
-                            if pat_ty.moves_by_default(cx.tcx, cx.param_env, pat.span) {
+                            if !pat_ty.is_copy_modulo_regions(cx.tcx, cx.param_env, pat.span) {
                                 check_move(p, sub.as_ref().map(|p| &**p), span_vec);
                             }
                         }

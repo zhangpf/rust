@@ -1,12 +1,3 @@
-// Copyright 2012-2017 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
 #![stable(feature = "duration_core", since = "1.25.0")]
 
 //! Temporal quantification.
@@ -274,13 +265,12 @@ impl Duration {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(duration_as_u128)]
     /// use std::time::Duration;
     ///
     /// let duration = Duration::new(5, 730023852);
     /// assert_eq!(duration.as_millis(), 5730);
     /// ```
-    #[unstable(feature = "duration_as_u128", issue = "50202")]
+    #[stable(feature = "duration_as_u128", since = "1.33.0")]
     #[inline]
     pub const fn as_millis(&self) -> u128 {
         self.secs as u128 * MILLIS_PER_SEC as u128 + (self.nanos / NANOS_PER_MILLI) as u128
@@ -291,13 +281,12 @@ impl Duration {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(duration_as_u128)]
     /// use std::time::Duration;
     ///
     /// let duration = Duration::new(5, 730023852);
     /// assert_eq!(duration.as_micros(), 5730023);
     /// ```
-    #[unstable(feature = "duration_as_u128", issue = "50202")]
+    #[stable(feature = "duration_as_u128", since = "1.33.0")]
     #[inline]
     pub const fn as_micros(&self) -> u128 {
         self.secs as u128 * MICROS_PER_SEC as u128 + (self.nanos / NANOS_PER_MICRO) as u128
@@ -308,13 +297,12 @@ impl Duration {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(duration_as_u128)]
     /// use std::time::Duration;
     ///
     /// let duration = Duration::new(5, 730023852);
     /// assert_eq!(duration.as_nanos(), 5730023852);
     /// ```
-    #[unstable(feature = "duration_as_u128", issue = "50202")]
+    #[stable(feature = "duration_as_u128", since = "1.33.0")]
     #[inline]
     pub const fn as_nanos(&self) -> u128 {
         self.secs as u128 * NANOS_PER_SEC as u128 + self.nanos as u128

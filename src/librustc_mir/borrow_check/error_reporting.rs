@@ -1,13 +1,3 @@
-// Copyright 2017 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use borrow_check::nll::explain_borrow::BorrowExplanation;
 use borrow_check::nll::region_infer::{RegionName, RegionNameSource};
 use borrow_check::prefixes::IsPrefixOf;
@@ -22,7 +12,7 @@ use rustc::mir::{
     TerminatorKind, VarBindingForm,
 };
 use rustc::ty::{self, DefIdTree};
-use rustc::util::ppaux::with_highlight_region_for_bound_region;
+use rustc::util::ppaux::RegionHighlightMode;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_data_structures::indexed_vec::Idx;
 use rustc_data_structures::sync::Lrc;
@@ -191,38 +181,36 @@ impl<'cx, 'gcx, 'tcx> MirBorrowckCtxt<'cx, 'gcx, 'tcx> {
                 );
             }
 
-            if let Some(ty) = self.retrieve_type_for_place(used_place) {
-                let needs_note = match ty.sty {
-                    ty::Closure(id, _) => {
-                        let tables = self.infcx.tcx.typeck_tables_of(id);
-                        let node_id = self.infcx.tcx.hir().as_local_node_id(id).unwrap();
-                        let hir_id = self.infcx.tcx.hir().node_to_hir_id(node_id);
+            let ty = used_place.ty(self.mir, self.infcx.tcx).to_ty(self.infcx.tcx);
+            let needs_note = match ty.sty {
+                ty::Closure(id, _) => {
+                    let tables = self.infcx.tcx.typeck_tables_of(id);
+                    let node_id = self.infcx.tcx.hir().as_local_node_id(id).unwrap();
+                    let hir_id = self.infcx.tcx.hir().node_to_hir_id(node_id);
 
-                        tables.closure_kind_origins().get(hir_id).is_none()
-                    }
-                    _ => true,
+                    tables.closure_kind_origins().get(hir_id).is_none()
+                }
+                _ => true,
+            };
+
+            if needs_note {
+                let mpi = self.move_data.moves[move_out_indices[0]].path;
+                let place = &self.move_data.move_paths[mpi].place;
+
+                let ty = place.ty(self.mir, self.infcx.tcx).to_ty(self.infcx.tcx);
+                let note_msg = match self.describe_place_with_options(
+                    place,
+                    IncludingDowncast(true),
+                ) {
+                    Some(name) => format!("`{}`", name),
+                    None => "value".to_owned(),
                 };
 
-                if needs_note {
-                    let mpi = self.move_data.moves[move_out_indices[0]].path;
-                    let place = &self.move_data.move_paths[mpi].place;
-
-                    if let Some(ty) = self.retrieve_type_for_place(place) {
-                        let note_msg = match self.describe_place_with_options(
-                            place,
-                            IncludingDowncast(true),
-                        ) {
-                            Some(name) => format!("`{}`", name),
-                            None => "value".to_owned(),
-                        };
-
-                        err.note(&format!(
-                            "move occurs because {} has type `{}`, \
-                             which does not implement the `Copy` trait",
-                            note_msg, ty
-                        ));
-                    }
-                }
+                err.note(&format!(
+                    "move occurs because {} has type `{}`, \
+                     which does not implement the `Copy` trait",
+                    note_msg, ty
+                ));
             }
 
             if let Some((_, mut old_err)) = self.move_error_reported
@@ -1392,7 +1380,10 @@ impl<'cx, 'gcx, 'tcx> MirBorrowckCtxt<'cx, 'gcx, 'tcx> {
         );
         if let TerminatorKind::Call {
             func: Operand::Constant(box Constant {
-                literal: ty::Const { ty: &ty::TyS { sty: ty::TyKind::FnDef(id, _), ..  }, ..  },
+                literal: ty::LazyConst::Evaluated(ty::Const {
+                    ty: &ty::TyS { sty: ty::TyKind::FnDef(id, _), ..  },
+                    ..
+                }),
                 ..
             }),
             args,
@@ -1568,7 +1559,7 @@ impl<'cx, 'gcx, 'tcx> MirBorrowckCtxt<'cx, 'gcx, 'tcx> {
                         )?;
                         buf.push_str("[");
                         if self.append_local_to_string(index, buf).is_err() {
-                            buf.push_str("..");
+                            buf.push_str("_");
                         }
                         buf.push_str("]");
                     }
@@ -1670,22 +1661,6 @@ impl<'cx, 'gcx, 'tcx> MirBorrowckCtxt<'cx, 'gcx, 'tcx> {
                     );
                 }
             }
-        }
-    }
-
-    /// Retrieve type of a place for the current MIR representation
-    fn retrieve_type_for_place(&self, place: &Place<'tcx>) -> Option<ty::Ty> {
-        match place {
-            Place::Local(local) => {
-                let local = &self.mir.local_decls[*local];
-                Some(local.ty)
-            }
-            Place::Promoted(ref prom) => Some(prom.1),
-            Place::Static(ref st) => Some(st.ty),
-            Place::Projection(ref proj) => match proj.elem {
-                ProjectionElem::Field(_, ty) => Some(ty),
-                _ => None,
-            },
         }
     }
 
@@ -2205,7 +2180,7 @@ impl<'tcx> AnnotatedBorrowFnSignature<'tcx> {
                 ty::RegionKind::RePlaceholder(ty::PlaceholderRegion { name: br, .. }),
                 _,
                 _,
-            ) => with_highlight_region_for_bound_region(*br, counter, || ty.to_string()),
+            ) => RegionHighlightMode::highlighting_bound_region(*br, counter, || ty.to_string()),
             _ => ty.to_string(),
         }
     }
@@ -2217,7 +2192,11 @@ impl<'tcx> AnnotatedBorrowFnSignature<'tcx> {
             ty::TyKind::Ref(region, _, _) => match region {
                 ty::RegionKind::ReLateBound(_, br)
                 | ty::RegionKind::RePlaceholder(ty::PlaceholderRegion { name: br, .. }) => {
-                    with_highlight_region_for_bound_region(*br, counter, || region.to_string())
+                    RegionHighlightMode::highlighting_bound_region(
+                        *br,
+                        counter,
+                        || region.to_string(),
+                    )
                 }
                 _ => region.to_string(),
             },

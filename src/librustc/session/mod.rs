@@ -1,13 +1,3 @@
-// Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 pub use self::code_stats::{DataTypeKind, SizeKind, FieldInfo, VariantInfo};
 use self::code_stats::CodeStats;
 
@@ -130,6 +120,9 @@ pub struct Session {
 
     /// Used by -Z profile-queries in util::common
     pub profile_channel: Lock<Option<mpsc::Sender<ProfileQueriesMsg>>>,
+
+    /// Used by -Z self-profile
+    pub self_profiling_active: bool,
 
     /// Used by -Z self-profile
     pub self_profiling: Lock<SelfProfiler>,
@@ -510,6 +503,9 @@ impl Session {
     pub fn profile_queries_and_keys(&self) -> bool {
         self.opts.debugging_opts.profile_queries_and_keys
     }
+    pub fn instrument_mcount(&self) -> bool {
+        self.opts.debugging_opts.instrument_mcount
+    }
     pub fn count_llvm_insns(&self) -> bool {
         self.opts.debugging_opts.count_llvm_insns
     }
@@ -674,7 +670,11 @@ impl Session {
     }
 
     pub fn must_not_eliminate_frame_pointers(&self) -> bool {
-        if let Some(x) = self.opts.cg.force_frame_pointers {
+        // "mcount" function relies on stack pointer.
+        // See https://sourceware.org/binutils/docs/gprof/Implementation.html
+        if self.instrument_mcount() {
+            true
+        } else if let Some(x) = self.opts.cg.force_frame_pointers {
             x
         } else {
             !self.target.target.options.eliminate_frame_pointer
@@ -823,10 +823,17 @@ impl Session {
         }
     }
 
+    #[inline(never)]
+    #[cold]
+    fn profiler_active<F: FnOnce(&mut SelfProfiler) -> ()>(&self, f: F) {
+        let mut profiler = self.self_profiling.borrow_mut();
+        f(&mut profiler);
+    }
+
+    #[inline(always)]
     pub fn profiler<F: FnOnce(&mut SelfProfiler) -> ()>(&self, f: F) {
-        if self.opts.debugging_opts.self_profile || self.opts.debugging_opts.profile_json {
-            let mut profiler = self.self_profiling.borrow_mut();
-            f(&mut profiler);
+        if unlikely!(self.self_profiling_active) {
+            self.profiler_active(f)
         }
     }
 
@@ -1145,6 +1152,9 @@ pub fn build_session_(
         CguReuseTracker::new_disabled()
     };
 
+    let self_profiling_active = sopts.debugging_opts.self_profile ||
+                                sopts.debugging_opts.profile_json;
+
     let sess = Session {
         target: target_cfg,
         host,
@@ -1177,6 +1187,7 @@ pub fn build_session_(
         imported_macro_spans: OneThread::new(RefCell::new(FxHashMap::default())),
         incr_comp_session: OneThread::new(RefCell::new(IncrCompSession::NotInitialized)),
         cgu_reuse_tracker,
+        self_profiling_active,
         self_profiling: Lock::new(SelfProfiler::new()),
         profile_channel: Lock::new(None),
         perf_stats: PerfStats {

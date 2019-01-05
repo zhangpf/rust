@@ -1,13 +1,3 @@
-// Copyright 2014 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! "Object safety" refers to the ability for a trait to be converted
 //! to an object. In general, traits may only be converted to an
 //! object if all of their methods meet certain criteria. In particular,
@@ -190,7 +180,26 @@ impl<'a, 'tcx> TyCtxt<'a, 'tcx, 'tcx> {
                         // In the case of a trait predicate, we can skip the "self" type.
                         data.skip_binder().input_types().skip(1).any(|t| t.has_self_ty())
                     }
-                    ty::Predicate::Projection(..) |
+                    ty::Predicate::Projection(ref data) => {
+                        // And similarly for projections. This should be redundant with
+                        // the previous check because any projection should have a
+                        // matching `Trait` predicate with the same inputs, but we do
+                        // the check to be safe.
+                        //
+                        // Note that we *do* allow projection *outputs* to contain
+                        // `self` (i.e., `trait Foo: Bar<Output=Self::Result> { type Result; }`),
+                        // we just require the user to specify *both* outputs
+                        // in the object type (i.e., `dyn Foo<Output=(), Result=()>`).
+                        //
+                        // This is ALT2 in issue #56288, see that for discussion of the
+                        // possible alternatives.
+                        data.skip_binder()
+                            .projection_ty
+                            .trait_ref(self)
+                            .input_types()
+                            .skip(1)
+                            .any(|t| t.has_self_ty())
+                    }
                     ty::Predicate::WellFormed(..) |
                     ty::Predicate::ObjectSafe(..) |
                     ty::Predicate::TypeOutlives(..) |
@@ -559,7 +568,7 @@ impl<'a, 'tcx> TyCtxt<'a, 'tcx, 'tcx> {
 
         self.infer_ctxt().enter(|ref infcx| {
             // the receiver is dispatchable iff the obligation holds
-            infcx.predicate_must_hold(&obligation)
+            infcx.predicate_must_hold_modulo_regions(&obligation)
         })
     }
 
